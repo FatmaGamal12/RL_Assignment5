@@ -1,44 +1,74 @@
-from envs.atari_env import AtariEnv
-from utils.replay_buffer import ReplayBuffer
+# src/collect_data.py
 import os
+import numpy as np
 
-# =========================
-# Configuration
-# =========================
+from src.envs.atari_env import AtariEnv
+from src.utils.replay_buffer import ReplayBuffer
+
+
 ENV_ID = "BreakoutNoFrameskip-v4"
-EPISODES = 50          # keep small at first
-MAX_STEPS = 1000
-SAVE_PATH = "data/breakout_random.pkl"
+
+TARGET_TRANSITIONS = 200_000
+CHUNK_SIZE = 20_000
+MAX_EPISODE_STEPS = 1000
+DATA_DIR = "data"
 
 
 def main():
-    # Make sure data folder exists
-    os.makedirs("data", exist_ok=True)
+    os.makedirs(DATA_DIR, exist_ok=True)
 
-    env = AtariEnv(
-        env_id=ENV_ID,
-        record_video=False  # no need to record random data
-    )
-
+    env = AtariEnv(env_id=ENV_ID)
     buffer = ReplayBuffer()
 
-    for ep in range(EPISODES):
-        obs = env.reset()
+    total_steps = 0
+    chunk_idx = 0
+    episode_idx = 0
 
-        for step in range(MAX_STEPS):
+    while total_steps < TARGET_TRANSITIONS:
+        obs = env.reset()
+        done = False
+        ep_reward = 0.0
+        ep_steps = 0
+
+        while (
+            not done
+            and total_steps < TARGET_TRANSITIONS
+            and ep_steps < MAX_EPISODE_STEPS
+        ):
             action = env.action_space.sample()
             next_obs, reward, done, _ = env.step(action)
 
-            buffer.add(obs, action, reward, done)
+            buffer.add(
+                obs.astype(np.uint8),
+                action,
+                float(reward),
+                done,
+                next_obs.astype(np.uint8),
+            )
+
             obs = next_obs
+            ep_reward += reward
+            ep_steps += 1
+            total_steps += 1
 
-            if done:
-                break
+            if len(buffer) >= CHUNK_SIZE:
+                save_path = os.path.join(
+                    DATA_DIR, f"breakout_chunk_{chunk_idx}.npz"
+                )
+                buffer.save(save_path)
+                buffer.clear()
+                chunk_idx += 1
 
-        print(f"Episode {ep + 1}/{EPISODES} finished")
+        episode_idx += 1
+        print(
+            f"[Collect] Episode {episode_idx:04d} | "
+            f"steps={ep_steps:4d} | "
+            f"reward={ep_reward:5.1f} | "
+            f"total_steps={total_steps}"
+        )
 
     env.close()
-    buffer.save(SAVE_PATH)
+    print("[Collect] DONE collecting data.")
 
 
 if __name__ == "__main__":

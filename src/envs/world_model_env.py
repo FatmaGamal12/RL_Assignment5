@@ -1,61 +1,53 @@
+# src/envs/world_model_env.py
 import numpy as np
 import torch
 
-from .atari_env import AtariEnv
-from ..models.vae import ConvVAE
 from ..models.rnn import MDNRNN
 
 
 class WorldModelEnv:
     """
-    Wraps the REAL Atari environment, but exposes a compact observation:
-        obs_controller = concat(z_t, h_t)
+    PURE imagination environment.
 
-    - z_t: VAE latent mean from the current real frame
-    - h_t: RNN hidden state updated using (z_{t-1}, action_{t-1})
-    - reward/done come from the REAL environment step (not predicted)
+    Trains the controller ONLY inside the learned world model (MDN-RNN).
 
-    This is the standard pipeline for training the controller:
-        real_env -> VAE(z) -> RNN hidden -> controller input
+    State returned to controller = concat(z_t, h_t)
+      z_t : latent (D,)
+      h_t : last LSTM hidden (H,)
     """
 
     def __init__(
         self,
-        env_id: str = "BreakoutNoFrameskip-v4",
         latent_dim: int = 32,
+        action_dim: int = 4,
         rnn_hidden_dim: int = 256,
         n_mixtures: int = 5,
-        vae_path: str = "artifacts/vae/vae_final.pt",
+        n_layers: int = 1,
         rnn_ckpt_path: str = "artifacts/rnn/rnn_best.pt",
-        record_video: bool = False,
-        video_folder: str = "videos_controller",
         device: str | None = None,
+        rollout_limit: int = 1000,
+        temperature: float = 1.0,          # >1 more random, <1 more deterministic
+        deterministic: bool = False,       # if True: use mean (no noise)
     ):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 
-        # Real environment (gives reward/done)
-        self.real_env = AtariEnv(
-            env_id=env_id,
-            video_folder=video_folder,
-            record_video=record_video,
-        )
-        self.action_space = self.real_env.action_space
-
         self.latent_dim = latent_dim
-        self.rnn_hidden_dim = rnn_hidden_dim
+        self.action_dim = action_dim
+        self.hidden_dim = rnn_hidden_dim
+        self.rollout_limit = rollout_limit
 
-        # Load VAE
-        self.vae = ConvVAE(latent_dim=latent_dim).to(self.device)
-        self.vae.load_state_dict(torch.load(vae_path, map_location=self.device))
-        self.vae.eval()
+        self.temperature = float(temperature)
+        self.deterministic = bool(deterministic)
 
-        # Load RNN (checkpoint can be dict or raw state_dict)
+        # --------------------
+        # Load RNN World Model
+        # --------------------
         self.rnn = MDNRNN(
             latent_dim=latent_dim,
-            action_dim=self.action_space.n,
+            action_dim=action_dim,
             hidden_dim=rnn_hidden_dim,
             n_mixtures=n_mixtures,
-            n_layers=1,
+            n_layers=n_layers,
         ).to(self.device)
 
         ckpt = torch.load(rnn_ckpt_path, map_location=self.device)
@@ -63,83 +55,115 @@ class WorldModelEnv:
             self.rnn.load_state_dict(ckpt["model_state"])
         else:
             self.rnn.load_state_dict(ckpt)
+
         self.rnn.eval()
 
         # Internal state
-        self.z = None
-        self.hidden = None  # (h, c)
+        self.z = None              # Tensor (D,)
+        self.hidden = None         # (h, c)
+        self.steps = 0
 
-        # Controller obs dimension
-        self.obs_dim = self.latent_dim + self.rnn_hidden_dim
+        # Controller observation size
+        self.obs_dim = latent_dim + rnn_hidden_dim
 
-    @torch.no_grad()
-    def _encode_obs_to_z(self, obs: np.ndarray) -> np.ndarray:
-        """
-        obs is expected shape: (1, 64, 64) float32 in [0,1]
-        returns z as numpy shape: (latent_dim,)
-        """
-        x = torch.from_numpy(obs).unsqueeze(0).float().to(self.device)  # (1,1,64,64)
-        mu, logvar = self.vae.encode(x)
-        z = mu[0].detach().cpu().numpy().astype(np.float32)  # (D,)
-        return z
-
+    # ======================================================
+    # Helpers
+    # ======================================================
     def _get_h_vec(self) -> np.ndarray:
-        """
-        Return last-layer hidden state h_t as numpy shape (hidden_dim,)
-        """
-        h, c = self.hidden  # h: (layers, B, H)
-        h_last = h[-1, 0].detach().cpu().numpy().astype(np.float32)
-        return h_last
+        h, _ = self.hidden                      # h: (layers, B, H)
+        return h[-1, 0].detach().cpu().numpy().astype(np.float32)
 
-    def _get_controller_obs(self) -> np.ndarray:
-        """
-        Return concat(z_t, h_t) as (obs_dim,)
-        """
-        h_vec = self._get_h_vec()
-        return np.concatenate([self.z, h_vec], axis=0).astype(np.float32)
+    def _get_obs(self) -> np.ndarray:
+        z = self.z.detach().cpu().numpy().astype(np.float32)
+        h = self._get_h_vec()
+        return np.concatenate([z, h], axis=0).astype(np.float32)
 
+    def _one_hot(self, action: int) -> torch.Tensor:
+        a = torch.zeros(self.action_dim, device=self.device)
+        a[action] = 1.0
+        return a
+
+    # ======================================================
+    # Gym-like API
+    # ======================================================
     def reset(self) -> np.ndarray:
-        """
-        Resets real env, encodes first frame -> z_0, sets hidden to zeros.
-        Returns controller observation: concat(z_0, h_0)
-        """
-        obs = self.real_env.reset()  # from your AtariEnv: (1,64,64)
-        self.z = self._encode_obs_to_z(obs)
+        # start from random latent
+        self.z = torch.randn(self.latent_dim, device=self.device)
 
-        # init RNN hidden state to zeros
-        h0 = torch.zeros((1, 1, self.rnn_hidden_dim), device=self.device)
-        c0 = torch.zeros((1, 1, self.rnn_hidden_dim), device=self.device)
+        h0 = torch.zeros((1, 1, self.hidden_dim), device=self.device)
+        c0 = torch.zeros((1, 1, self.hidden_dim), device=self.device)
         self.hidden = (h0, c0)
 
-        return self._get_controller_obs()
+        self.steps = 0
+        return self._get_obs()
 
     @torch.no_grad()
     def step(self, action: int):
         """
-        1) Update RNN hidden using (current z, action)
-        2) Step the REAL env -> new frame, reward, done
-        3) Encode new frame -> new z
-        4) Return concat(new z, new h), reward, done, info
+        One imagined step using the MDN-RNN.
+
+        Returns:
+          obs_next (obs_dim,)
+          reward (float)
+          done (bool)
+          info (dict)
         """
-        # 1) update hidden using current z and action
-        z_seq = torch.from_numpy(self.z).view(1, 1, -1).float().to(self.device)  # (1,1,D)
-        a_oh = np.zeros((self.action_space.n,), dtype=np.float32)
-        a_oh[action] = 1.0
-        a_seq = torch.from_numpy(a_oh).view(1, 1, -1).float().to(self.device)    # (1,1,A)
+        self.steps += 1
 
-        # forward one step to update hidden (we don't need pi/mu/sigma now)
-        _, _, _, next_hidden = self.rnn(z_seq, a_seq, hidden=self.hidden)
-        self.hidden = next_hidden
+        z_t = self.z.view(1, -1)                       # (B=1, D)
+        a_t = self._one_hot(action).view(1, -1)        # (B=1, A)
 
-        # 2) step real env
-        obs, reward, done, info = self.real_env.step(action)
+        # Use the model's built-in sampler (matches training assumptions)
+        if self.deterministic:
+            # deterministic: use mu of most likely component per dim
+            # We approximate by calling forward and choosing max-pi component.
+            z_seq = z_t.unsqueeze(1)                   # (1,1,D)
+            a_seq = a_t.unsqueeze(1)                   # (1,1,A)
 
-        # 3) encode next obs -> z
-        self.z = self._encode_obs_to_z(obs)
+            pi, mu, sigma, r_pred, next_hidden = self.rnn(z_seq, a_seq, hidden=self.hidden)
+            self.hidden = next_hidden
 
-        # 4) controller obs
-        ctrl_obs = self._get_controller_obs()
-        return ctrl_obs, float(reward), bool(done), info
+            # shapes: pi/mu/sigma = (1,1,M,D)
+            pi = pi[:, 0]                              # (1,M,D)
+            mu = mu[:, 0]                              # (1,M,D)
 
-    def close(self):
-        self.real_env.close()
+            # choose mixture per dim using argmax pi
+            # pi_perm: (1,D,M) then argmax over M -> (1,D)
+            pi_perm = pi.permute(0, 2, 1)
+            idx = torch.argmax(pi_perm, dim=-1)        # (1,D)
+
+            mu_perm = mu.permute(0, 2, 1)              # (1,D,M)
+            z_next = torch.gather(mu_perm, 2, idx.unsqueeze(-1)).squeeze(-1)  # (1,D)
+
+            z_next = z_next[0]
+            reward = r_pred[:, 0].squeeze().item()
+
+        else:
+            # stochastic sampling path (recommended)
+            z_next, r_pred, next_hidden = self.rnn.sample_next(
+                z_t, a_t, hidden=self.hidden, temperature=self.temperature
+            )
+            self.hidden = next_hidden
+            z_next = z_next[0]
+            reward = r_pred.squeeze().item()
+
+        self.z = z_next
+        done = self.steps >= self.rollout_limit
+
+        return self._get_obs(), float(reward), bool(done), {}
+
+    # ======================================================
+    # Rollout helper (optional)
+    # ======================================================
+    def rollout(self, controller, horizon: int = 15) -> float:
+        obs = self.reset()
+        total_reward = 0.0
+
+        for _ in range(horizon):
+            action = controller.act(obs)
+            obs, r, done, _ = self.step(action)
+            total_reward += r
+            if done:
+                break
+
+        return float(total_reward)
