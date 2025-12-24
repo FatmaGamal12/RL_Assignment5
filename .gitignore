@@ -44,12 +44,10 @@ temp/
 # ===============================
 # RL / ML Artifacts (VERY IMPORTANT)
 # ===============================
-artifacts/
 checkpoints/
 models/*.pt
 models/*.pth
 models/*.ckpt
-*.pt
 *.pth
 *.ckpt
 
