@@ -16,7 +16,7 @@ DATA_DIR = "data"
 # -------------------------
 # VAE
 # -------------------------
-LATENT_DIM = 32
+LATENT_DIM = 64
 FRAME_STACK = 4
 FRAME_SIZE = 84
 
