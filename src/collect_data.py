@@ -35,7 +35,11 @@ def main():
             and total_steps < TARGET_TRANSITIONS
             and ep_steps < MAX_EPISODE_STEPS
         ):
-            action = env.action_space.sample()
+            if np.random.rand() < 0.2:
+                action = env.action_space.sample()
+            else:
+                action = 1  # FIRE or simple heuristic
+
             next_obs, reward, done, _ = env.step(action)
 
             buffer.add(

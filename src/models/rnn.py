@@ -48,6 +48,7 @@ class MDNRNN(nn.Module):
 
         # Reward head
         self.reward_head = nn.Linear(hidden_dim, 1)
+        self.done_head = nn.Linear(hidden_dim, 1)
 
         self._log_2pi = math.log(2.0 * math.pi)
 
@@ -80,9 +81,11 @@ class MDNRNN(nn.Module):
         pi = F.softmax(pi_logits, dim=2)
 
         # Reward prediction
-        r_pred = self.reward_head(out)               # (B,T,1)
+        r_pred = self.reward_head(out)
+        done_logits = self.done_head(out)     # (B,T,1)
 
-        return pi, mu, sigma, r_pred, next_hidden
+        return pi, mu, sigma, r_pred, done_logits, next_hidden
+
 
     def mdn_nll(self, z_next, pi, mu, sigma):
         """
@@ -101,6 +104,19 @@ class MDNRNN(nn.Module):
         log_sum = torch.logsumexp(log_mix, dim=2)  # (B,T,D)
 
         return -log_sum.mean()
+    def done_bce(self, done_target, done_logits):
+        """
+        done_target: (B,T) or (B,T,1)
+        done_logits: (B,T,1)
+        """
+        if done_target.ndim == 2:
+            done_target = done_target.unsqueeze(-1)
+
+        return F.binary_cross_entropy_with_logits(
+            done_logits,
+            done_target.float(),
+            reduction="mean",
+        )
 
     def reward_mse(self, r_target, r_pred):
         """
@@ -146,5 +162,10 @@ class MDNRNN(nn.Module):
         sigma_sel = torch.gather(sigma_perm, 2, gather_idx).squeeze(-1)
 
         z_next = mu_sel + sigma_sel * torch.randn_like(mu_sel)
+        pi, mu, sigma, r_pred, done_logits, next_hidden = self.forward(
+            z_seq, a_seq, hidden=hidden
+        )
 
-        return z_next, r_pred, next_hidden
+        done_logits = done_logits[:, 0]   # (B,1)
+        return z_next, r_pred, done_logits, next_hidden
+

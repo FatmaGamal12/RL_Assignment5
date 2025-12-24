@@ -18,7 +18,7 @@ class WorldModelEnv:
 
     def __init__(
         self,
-        latent_dim: int = 32,
+        latent_dim: int = 64,
         action_dim: int = 4,
         rnn_hidden_dim: int = 256,
         n_mixtures: int = 5,
@@ -101,56 +101,55 @@ class WorldModelEnv:
     def step(self, action: int):
         """
         One imagined step using the MDN-RNN.
-
-        Returns:
-          obs_next (obs_dim,)
-          reward (float)
-          done (bool)
-          info (dict)
         """
         self.steps += 1
 
-        z_t = self.z.view(1, -1)                       # (B=1, D)
-        a_t = self._one_hot(action).view(1, -1)        # (B=1, A)
+        z_t = self.z.view(1, -1)                # (1, D)
+        a_t = self._one_hot(action).view(1, -1) # (1, A)
 
-        # Use the model's built-in sampler (matches training assumptions)
         if self.deterministic:
-            # deterministic: use mu of most likely component per dim
-            # We approximate by calling forward and choosing max-pi component.
-            z_seq = z_t.unsqueeze(1)                   # (1,1,D)
-            a_seq = a_t.unsqueeze(1)                   # (1,1,A)
+            # ---------- deterministic ----------
+            z_seq = z_t.unsqueeze(1)            # (1,1,D)
+            a_seq = a_t.unsqueeze(1)            # (1,1,A)
 
-            pi, mu, sigma, r_pred, next_hidden = self.rnn(z_seq, a_seq, hidden=self.hidden)
+            pi, mu, sigma, r_pred, done_logits, next_hidden = \
+                self.rnn(z_seq, a_seq, hidden=self.hidden)
+
             self.hidden = next_hidden
 
-            # shapes: pi/mu/sigma = (1,1,M,D)
-            pi = pi[:, 0]                              # (1,M,D)
-            mu = mu[:, 0]                              # (1,M,D)
+            pi = pi[:, 0]                       # (1,M,D)
+            mu = mu[:, 0]                       # (1,M,D)
 
-            # choose mixture per dim using argmax pi
-            # pi_perm: (1,D,M) then argmax over M -> (1,D)
-            pi_perm = pi.permute(0, 2, 1)
-            idx = torch.argmax(pi_perm, dim=-1)        # (1,D)
+            pi_perm = pi.permute(0, 2, 1)       # (1,D,M)
+            idx = torch.argmax(pi_perm, dim=-1)
 
-            mu_perm = mu.permute(0, 2, 1)              # (1,D,M)
-            z_next = torch.gather(mu_perm, 2, idx.unsqueeze(-1)).squeeze(-1)  # (1,D)
+            mu_perm = mu.permute(0, 2, 1)
+            z_next = torch.gather(
+                mu_perm, 2, idx.unsqueeze(-1)
+            ).squeeze(-1)[0]
 
-            z_next = z_next[0]
-            reward = r_pred[:, 0].squeeze().item()
+            reward = r_pred[0, 0].item()
+            done_prob = torch.sigmoid(done_logits[0, 0]).item()
 
         else:
-            # stochastic sampling path (recommended)
-            z_next, r_pred, next_hidden = self.rnn.sample_next(
-                z_t, a_t, hidden=self.hidden, temperature=self.temperature
-            )
+            # ---------- stochastic ----------
+            z_next, r_pred, done_logits, next_hidden = \
+                self.rnn.sample_next(
+                    z_t, a_t,
+                    hidden=self.hidden,
+                    temperature=self.temperature
+                )
+
             self.hidden = next_hidden
             z_next = z_next[0]
-            reward = r_pred.squeeze().item()
+            reward = r_pred[0].item()
+            done_prob = torch.sigmoid(done_logits[0]).item()
 
         self.z = z_next
-        done = self.steps >= self.rollout_limit
+        done = (done_prob > 0.5) or (self.steps >= self.rollout_limit)
 
         return self._get_obs(), float(reward), bool(done), {}
+
 
     # ======================================================
     # Rollout helper (optional)

@@ -22,11 +22,11 @@ DATA_DIR = "data"
 SEED = 42
 
 
-LATENT_DIM = 32
+LATENT_DIM = 64
 BATCH_SIZE = 128
 EPOCHS = 30
 LR = 1e-3
-BETA = 1.0                # Try 0.5 if recon is blurry
+BETA = 0.25             # Try 0.5 if recon is blurry
 NUM_WORKERS = 0           # Windows safe
 SAVE_EVERY_EPOCH = True
 SAMPLE_RECON_N = 16

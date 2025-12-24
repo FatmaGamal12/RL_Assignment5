@@ -2,6 +2,7 @@
 import os
 import glob
 import random
+from xml.parsers.expat import model
 import cv2
 from typing import Tuple
 
@@ -24,21 +25,21 @@ DATA_DIR = "data"                 # contains breakout_chunk_*.npz
 VAE_WEIGHTS = "artifacts/vae/vae_final.pt"
 OUT_DIR = "artifacts/rnn"
 
-LATENT_DIM = 32
+LATENT_DIM = 64
 HIDDEN_DIM = 256
 N_MIXTURES = 5
 N_LAYERS = 1
 
 SEQ_LEN = 32
 BATCH_SIZE = 64
-EPOCHS = 60
+EPOCHS = 40
 LR = 3e-4
 GRAD_CLIP = 1.0
 
 TRAIN_FRAC = 0.95
 NUM_WORKERS = 0
 
-REWARD_COEF = 5.0                 # important for Breakout
+REWARD_COEF = 1.0                # important for Breakout
 
 wandb.init(
     project="world-models-breakout",
@@ -123,12 +124,16 @@ class LatentSequenceDataset(Dataset):
 
         a_oh = one_hot(a_seq, self.action_dim)
 
+        done_tgt = self.done[i : i + self.seq_len]
+
         return (
             torch.from_numpy(z_seq).float(),
             torch.from_numpy(a_oh).float(),
             torch.from_numpy(z_tgt).float(),
             torch.from_numpy(r_tgt).float().unsqueeze(-1),
+            torch.from_numpy(done_tgt).float().unsqueeze(-1),
         )
+
 
 
 # =========================
@@ -247,15 +252,18 @@ def main():
         model.train()
         train_loss = 0.0
 
-        for z_seq, a_seq, z_tgt, r_tgt in train_loader:
+        for z_seq, a_seq, z_tgt, r_tgt, done_tgt in train_loader:
             z_seq, a_seq = z_seq.to(device), a_seq.to(device)
             z_tgt, r_tgt = z_tgt.to(device), r_tgt.to(device)
 
-            pi, mu, sigma, r_pred, _ = model(z_seq, a_seq)
+            pi, mu, sigma, r_pred, done_logits, _ = model(z_seq, a_seq)
             mdn_loss = model.mdn_nll(z_tgt, pi, mu, sigma)
             reward_loss = F.mse_loss(r_pred, r_tgt)
+            done_loss = model.done_bce(done_tgt, done_logits)
 
-            loss = mdn_loss + REWARD_COEF * reward_loss
+
+            loss = mdn_loss + REWARD_COEF * reward_loss + 0.5 * done_loss
+
 
             opt.zero_grad()
             loss.backward()
@@ -272,9 +280,12 @@ def main():
                 z_seq, a_seq = z_seq.to(device), a_seq.to(device)
                 z_tgt, r_tgt = z_tgt.to(device), r_tgt.to(device)
 
-                pi, mu, sigma, r_pred, _ = model(z_seq, a_seq)
-                loss = model.mdn_nll(z_tgt, pi, mu, sigma) + REWARD_COEF * F.mse_loss(r_pred, r_tgt)
-                val_loss += loss.item()
+                pi, mu, sigma, r_pred, done_logits, _ = model(z_seq, a_seq)
+                val_loss = (
+                    model.mdn_nll(z_tgt, pi, mu, sigma)
+                    + REWARD_COEF * F.mse_loss(r_pred, r_tgt)
+                    + 0.5 * model.done_bce(done_tgt, done_logits)
+                )
 
         print(f"[RNN] Epoch {epoch}/{EPOCHS} | train={train_loss:.4f} | val={val_loss:.4f}")
         wandb.log({
