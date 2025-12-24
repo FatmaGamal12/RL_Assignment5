@@ -277,7 +277,7 @@ def main():
         model.eval()
         val_loss = 0.0
         with torch.no_grad():
-            for z_seq, a_seq, z_tgt, r_tgt in val_loader:
+            for z_seq, a_seq, z_tgt, r_tgt, done_tgt in val_loader:
                 z_seq, a_seq = z_seq.to(device), a_seq.to(device)
                 z_tgt, r_tgt = z_tgt.to(device), r_tgt.to(device)
                 done_tgt = done_tgt.to(device)
