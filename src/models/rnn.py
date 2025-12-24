@@ -132,27 +132,35 @@ class MDNRNN(nn.Module):
         """
         z_t: (B,D)
         a_t: (B,A)
+
         returns:
-          z_next: (B,D)
-          r_pred: (B,1)
-          next_hidden
+        z_next:     (B,D)
+        r_pred:     (B,1)
+        done_logits:(B,1)
+        next_hidden
         """
         z_seq = z_t.unsqueeze(1)  # (B,1,D)
         a_seq = a_t.unsqueeze(1)  # (B,1,A)
 
-        pi, mu, sigma, r_pred, next_hidden = self.forward(z_seq, a_seq, hidden=hidden)
+        # ✅ SINGLE forward call (correct unpacking)
+        pi, mu, sigma, r_pred, done_logits, next_hidden = self.forward(
+            z_seq, a_seq, hidden=hidden
+        )
 
-        # (B,1,M,D)->(B,M,D)
-        pi = pi[:, 0]
-        mu = mu[:, 0]
+        # Remove time dimension
+        pi = pi[:, 0]                 # (B,M,D)
+        mu = mu[:, 0]                 # (B,M,D)
         sigma = sigma[:, 0] * temperature
-        r_pred = r_pred[:, 0]  # (B,1)
+        r_pred = r_pred[:, 0]         # (B,1)
+        done_logits = done_logits[:, 0]  # (B,1)
 
         B, M, D = mu.shape
 
-        # sample per-dim mixture (simplified)
+        # Sample mixture per latent dimension
         pi_perm = pi.permute(0, 2, 1)  # (B,D,M)
-        idx = torch.multinomial(pi_perm.reshape(B * D, M), 1).view(B, D)
+        idx = torch.multinomial(
+            pi_perm.reshape(B * D, M), 1
+        ).view(B, D)
 
         mu_perm = mu.permute(0, 2, 1)        # (B,D,M)
         sigma_perm = sigma.permute(0, 2, 1)  # (B,D,M)
@@ -162,10 +170,7 @@ class MDNRNN(nn.Module):
         sigma_sel = torch.gather(sigma_perm, 2, gather_idx).squeeze(-1)
 
         z_next = mu_sel + sigma_sel * torch.randn_like(mu_sel)
-        pi, mu, sigma, r_pred, done_logits, next_hidden = self.forward(
-            z_seq, a_seq, hidden=hidden
-        )
 
-        done_logits = done_logits[:, 0]   # (B,1)
         return z_next, r_pred, done_logits, next_hidden
+
 
