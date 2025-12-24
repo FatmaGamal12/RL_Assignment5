@@ -12,6 +12,7 @@ from torch.utils.data import Dataset, DataLoader
 
 from src.models.vae import ConvVAE
 from src.models.rnn import MDNRNN
+import wandb
 
 
 # =========================
@@ -39,6 +40,19 @@ NUM_WORKERS = 0
 
 REWARD_COEF = 5.0                 # important for Breakout
 
+wandb.init(
+    project="world-models-breakout",
+    name="mdn-rnn",
+    config={
+        "latent_dim": LATENT_DIM,
+        "hidden_dim": HIDDEN_DIM,
+        "seq_len": SEQ_LEN,
+        "epochs": EPOCHS,
+        "lr": LR,
+        "reward_coef": REWARD_COEF,
+        "batch_size": BATCH_SIZE,
+    }
+)
 
 # =========================
 # Utils
@@ -263,6 +277,12 @@ def main():
                 val_loss += loss.item()
 
         print(f"[RNN] Epoch {epoch}/{EPOCHS} | train={train_loss:.4f} | val={val_loss:.4f}")
+        wandb.log({
+            "rnn/train_loss": train_loss,
+            "rnn/val_loss": val_loss,
+            "epoch": epoch,
+        })
+
 
         if val_loss < best_val:
             best_val = val_loss
@@ -271,6 +291,7 @@ def main():
 
     torch.save(model.state_dict(), os.path.join(OUT_DIR, "rnn_final.pt"))
     print("[RNN] Training complete")
+    wandb.finish()
 
 
 if __name__ == "__main__":

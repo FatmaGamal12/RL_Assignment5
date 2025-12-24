@@ -10,6 +10,7 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision.utils import save_image
 
 from src.models.vae import ConvVAE
+import wandb
 
 
 # =========================
@@ -30,6 +31,19 @@ NUM_WORKERS = 0           # Windows safe
 SAVE_EVERY_EPOCH = True
 SAMPLE_RECON_N = 16
 
+wandb.init(
+    project="world-models-breakout",
+    name="vae",
+    config={
+        "latent_dim": LATENT_DIM,
+        "epochs": EPOCHS,
+        "batch_size": BATCH_SIZE,
+        "lr": LR,
+        "beta": BETA,
+        "frame_size": 64,
+        "dataset": "BreakoutNoFrameskip-v4",
+    }
+)
 
 # =========================
 # Utils
@@ -158,6 +172,12 @@ def main():
             f"recon={total_recon/steps:.6f} "
             f"kl={total_kl/steps:.6f}"
         )
+        wandb.log({
+            "vae/loss": total_loss / steps,
+            "vae/recon": total_recon / steps,
+            "vae/kl": total_kl / steps,
+            "epoch": epoch,
+        })
 
         # Save recon images
         recon_path = os.path.join(OUT_DIR, f"recon_epoch_{epoch}.png")
@@ -172,6 +192,7 @@ def main():
     final_path = os.path.join(OUT_DIR, "vae_final.pt")
     torch.save(model.state_dict(), final_path)
     print(f"[VAE] Saved final model → {final_path}")
+    wandb.finish()
 
 
 if __name__ == "__main__":

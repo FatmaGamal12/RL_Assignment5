@@ -22,6 +22,25 @@ from ..config import (
     WORLD_TEMPERATURE,
     WORLD_DETERMINISTIC,
 )
+import wandb
+
+wandb.init(
+    project="world-models-breakout",
+    name="controller",
+    config={
+        "population_size": POPULATION_SIZE,
+        "elite_fraction": ELITE_FRACTION,
+        "noise_std": NOISE_STD,
+        "iterations": CONTROLLER_ITERS,
+        "episodes_per_eval": EPISODES_PER_EVAL,
+        "max_steps": MAX_STEPS,
+        "temperature": WORLD_TEMPERATURE,
+        "deterministic": WORLD_DETERMINISTIC,
+        "optimizer": "evolution-strategy",
+    }
+)
+
+
 
 
 def set_seed(seed: int):
@@ -118,6 +137,12 @@ def main():
         best_ctrl = population[best_idx]
 
         print(f"[Controller] Iter {it:02d}/{CONTROLLER_ITERS} | mean={mean_reward:.2f} max={max_reward:.2f}")
+        wandb.log({
+            "controller/mean_reward": mean_reward,
+            "controller/max_reward": max_reward,
+            "iteration": it,
+        })
+
 
         # Update base controller from elites
         average_elites_into_base(base_controller, elites)
@@ -131,7 +156,7 @@ def main():
     elapsed = time.time() - start_time
     print(f"[Controller] Training finished in {elapsed/60:.1f} min")
     print(f"[Controller] Best reward: {best_reward:.2f}")
-
+    wandb.finish()
     env.close()
 
 
