@@ -5,7 +5,7 @@
 # -------------------------
 # Environment
 # -------------------------
-ENV_ID = "BreakoutNoFrameskip-v4"
+ENV_ID = "SpaceInvadersNoFrameskip-v4"
 MAX_STEPS = 1000
 
 # -------------------------
@@ -41,7 +41,7 @@ RNN_PATH = "artifacts/rnn/rnn_best.pt"
 # -------------------------
 # Controller (Random Search / ES)
 # -------------------------
-ACTION_DIM = 4
+ACTION_DIM = 6
 
 POPULATION_SIZE = 30
 ELITE_FRACTION = 0.2

@@ -6,9 +6,9 @@ from src.envs.atari_env import AtariEnv
 from src.utils.replay_buffer import ReplayBuffer
 
 
-ENV_ID = "BreakoutNoFrameskip-v4"
+ENV_ID = "SpaceInvadersNoFrameskip-v4"
 
-TARGET_TRANSITIONS = 400_000
+TARGET_TRANSITIONS = 300_000
 CHUNK_SIZE = 20_000
 MAX_EPISODE_STEPS = 1000
 DATA_DIR = "data"
