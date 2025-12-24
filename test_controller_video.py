@@ -20,7 +20,7 @@ LATENT_DIM = 32
 RNN_HIDDEN_DIM = 256
 ACTION_DIM = 6
 
-VAE_PATH = "artifacts/vae/vae_final(space).pt"
+VAE_PATH = "artifacts/vae/vae_final(space) .pt"
 RNN_PATH = "artifacts/rnn/rnn_final.pt"
 CONTROLLER_PATH = "artifacts/controller/controller_best.pt"
 
