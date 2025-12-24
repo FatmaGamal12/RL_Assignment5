@@ -255,6 +255,7 @@ def main():
         for z_seq, a_seq, z_tgt, r_tgt, done_tgt in train_loader:
             z_seq, a_seq = z_seq.to(device), a_seq.to(device)
             z_tgt, r_tgt = z_tgt.to(device), r_tgt.to(device)
+            done_tgt = done_tgt.to(device)
 
             pi, mu, sigma, r_pred, done_logits, _ = model(z_seq, a_seq)
             mdn_loss = model.mdn_nll(z_tgt, pi, mu, sigma)
@@ -279,6 +280,7 @@ def main():
             for z_seq, a_seq, z_tgt, r_tgt in val_loader:
                 z_seq, a_seq = z_seq.to(device), a_seq.to(device)
                 z_tgt, r_tgt = z_tgt.to(device), r_tgt.to(device)
+                done_tgt = done_tgt.to(device)
 
                 pi, mu, sigma, r_pred, done_logits, _ = model(z_seq, a_seq)
                 val_loss = (
